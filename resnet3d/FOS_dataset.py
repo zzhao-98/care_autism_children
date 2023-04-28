@@ -8,6 +8,7 @@ from torchvision.transforms._transforms_video import (
     CenterCropVideo,
     NormalizeVideo,
 )
+import torch.nn.functional as F
 
 ####################
 # SlowFast transform
@@ -70,33 +71,34 @@ clip_duration = (num_frames * sampling_rate)/frames_per_second
 start_sec = 0
 end_sec = start_sec + clip_duration
 class FOS_set(Dataset):
-    def __init__(self, dir_data, transform=None):
-        self.paths_video = []
-        self.labels = []
+    def __init__(self, df_dataset, list_caring_labels, transform=None):
+        # self.paths_video = df_dataset['video_path'].tolist()
+        # self.labels = df_dataset['labels'].tolist()
+        self.df = df_dataset
         self.transform = transform
-        self.label_dict = {'C+': 0, 'C-': 1, 'EA': 2, 'PN': 3}
+        self.list_caring_labels = list_caring_labels
 
-
-        g = os.walk(dir_data)
-        for path, dir_list, file_list in g:
-            for file_name in file_list:
-                self.paths_video.append(os.path.join(path, file_name))
-                self.labels.append(file_name.split('_')[0])
 
     def __getitem__(self, index):
-        label = self.labels[index]
-        label = self.label_dict[label]
-        video_path = self.paths_video[index]
+        # label processing
+        onehot_labels = []
+        for caring_label in self.list_caring_labels:
+            onehot_labels.append(int(self.df.iloc[index][caring_label]))
+        onehot_labels = torch.tensor(onehot_labels, dtype=torch.float32)
+        # onehot_labels = F.one_hot(onehot_labels, 2)
+        # onehot_labels = torch.reshape(onehot_labels, (-1,))
+        # onehot_labels = onehot_labels.to(torch.float32)
+        # video processings
+        video_path = self.df.iloc[index]['video_path']
         video = EncodedVideo.from_path(video_path)
         video_data = video.get_clip(start_sec=start_sec, end_sec=end_sec)
         if self.transform:
             video_data = self.transform(video_data)
         inputs = video_data["video"]
-        return (inputs, label)
+        return (inputs, onehot_labels)
 
     def __len__(self):
-        return len(self.labels)
-    
+        return len(self.df)
 
 class FOS_dataset(Dataset):
     def __init__(self, df_dataset, transform=None):
