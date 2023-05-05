@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import os
 
-from FOS_dataset import FOS_set, transform
+from FOS_dataset import FOS_set, rand_transform, transform
 
 if __name__ == '__main__':
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"  # using specific gpu to train model.
@@ -20,21 +20,20 @@ if __name__ == '__main__':
     model.blocks[6].proj = nn.Sequential(
         nn.Linear(in_features=2304, out_features=400),
         nn.ReLU(),
-        nn.Linear(in_features=400, out_features=2)
+        nn.Linear(in_features=400, out_features=3)
     )
     model = model.to(device)
     # model = nn.DataParallel(model).to(device)
     # model.load_state_dict(torch.load(r'best_cv_model.pt'))
 
     # Define optimizer and loss function
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
-    # criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
     criterion = nn.MultiLabelSoftMarginLoss()
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
-
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.3)
     # Define dataset
-    vision_classes = ['C+', 'EA']
-    train_set = FOS_set(df_train_set, list_caring_labels=vision_classes, transform=transform)
+    vision_classes = ['C+', 'PN', 'EA']
+    train_set = FOS_set(df_train_set, list_caring_labels=vision_classes, transform=rand_transform)
     val_set = FOS_set(df_val_set, list_caring_labels=vision_classes, transform=transform)
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=batch_size, shuffle=False)
@@ -105,11 +104,11 @@ if __name__ == '__main__':
                           time_cost))
             df_train_log.loc[len(df_train_log.index)] = [epoch + 1, train_mean_loss, train_mean_accuracy, val_mean_loss,
                                                          val_mean_accuracy, time_cost]
-        scheduler.step(val_loss)
-        df_train_log.to_csv('model_training_log_3.csv', index=False)
+        scheduler.step()
+        df_train_log.to_csv('model_training_log_balanced.csv', index=False)
 
         # Save the model if reach the highest validation accuracy
         if val_mean_accuracy > max_val_accuracy:
-            torch.save(model.state_dict(), 'best_cv_model_3.pt')
+            torch.save(model.state_dict(), 'best_cv_model_balanced.pt')
             print('Highest accuracy, save the model!')
             max_val_accuracy = val_mean_accuracy

@@ -30,6 +30,50 @@ from pytorchvideo.transforms import (
     UniformCropVideo
 )
 
+def random_temporal_subsample(
+    x: torch.Tensor, num_samples: int, temporal_dim: int = -3
+) -> torch.Tensor:
+    """
+    Random subsamples num_samples indices from the temporal dimension of the video.
+    When num_samples is larger than the size of temporal dimension of the video, it
+    will sample frames based on nearest neighbor interpolation.
+
+    Args:
+        x (torch.Tensor): A video tensor with dimension larger than one with torch
+            tensor type includes int, long, float, complex, etc.
+        num_samples (int): The number of equispaced samples to be selected
+        temporal_dim (int): dimension of temporal to perform temporal subsample.
+
+    Returns:
+        An x-like Tensor with subsampled temporal dimension.
+    """
+    t = x.shape[temporal_dim]
+    assert num_samples > 0 and t > 0
+    # Sample by nearest neighbor interpolation if num_samples > t.
+    # Random sample the frames
+    base_tensor = torch.linspace(0, t - 1, num_samples)
+    max_var = (t / num_samples) * 0.5
+    vars = (torch.rand(32) * 2 - 1) * max_var
+    indices = base_tensor + vars
+    indices = torch.clamp(indices, 0, t - 1).long()
+    return torch.index_select(x, temporal_dim, indices)
+
+class RandomTemporalSubsample(torch.nn.Module):
+
+    def __init__(self, num_samples: int):
+        super().__init__()
+        self._num_samples = num_samples
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (torch.Tensor): video tensor with shape (C, T, H, W).
+        """
+        return random_temporal_subsample(
+            x, self._num_samples
+        )
+
+
 class PackPathway(torch.nn.Module):
     """
     Transform for converting video frames as a list of tensors.
@@ -66,14 +110,28 @@ transform =  ApplyTransformToKey(
     ),
 )
 
+rand_transform =  ApplyTransformToKey(
+    key="video",
+    transform=Compose(
+        [
+            RandomTemporalSubsample(num_frames),
+            Lambda(lambda x: x/255.0),
+            NormalizeVideo(mean, std),
+            ShortSideScale(
+                size=side_size
+            ),
+            CenterCropVideo(crop_size),
+            PackPathway()
+        ]
+    ),
+)
+
 # The duration of the input clip is also specific to the model.
 clip_duration = (num_frames * sampling_rate)/frames_per_second
 start_sec = 0
 end_sec = start_sec + clip_duration
 class FOS_set(Dataset):
     def __init__(self, df_dataset, list_caring_labels, transform=None):
-        # self.paths_video = df_dataset['video_path'].tolist()
-        # self.labels = df_dataset['labels'].tolist()
         self.df = df_dataset
         self.transform = transform
         self.list_caring_labels = list_caring_labels
@@ -85,9 +143,7 @@ class FOS_set(Dataset):
         for caring_label in self.list_caring_labels:
             onehot_labels.append(int(self.df.iloc[index][caring_label]))
         onehot_labels = torch.tensor(onehot_labels, dtype=torch.float32)
-        # onehot_labels = F.one_hot(onehot_labels, 2)
-        # onehot_labels = torch.reshape(onehot_labels, (-1,))
-        # onehot_labels = onehot_labels.to(torch.float32)
+
         # video processings
         video_path = self.df.iloc[index]['video_path']
         video = EncodedVideo.from_path(video_path)
@@ -99,25 +155,3 @@ class FOS_set(Dataset):
 
     def __len__(self):
         return len(self.df)
-
-class FOS_dataset(Dataset):
-    def __init__(self, df_dataset, transform=None):
-        self.paths_video = df_dataset['video_path'].tolist()
-        self.labels = df_dataset['label'].tolist()
-        self.transform = transform
-        self.label_dict = {'C+': 0, 'C-': 1, 'EA': 2, 'PN': 3}
-
-
-    def __getitem__(self, index):
-        label = self.labels[index]
-        label = self.label_dict[label]
-        video_path = self.paths_video[index]
-        video = EncodedVideo.from_path(video_path)
-        video_data = video.get_clip(start_sec=start_sec, end_sec=end_sec)
-        if self.transform:
-            video_data = self.transform(video_data)
-        inputs = video_data["video"]
-        return (inputs, label)
-
-    def __len__(self):
-        return len(self.labels)
